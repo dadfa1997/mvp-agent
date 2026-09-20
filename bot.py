@@ -569,6 +569,10 @@ def callback_handler(call):
         goal = call.data.replace("goal_", "")
         user_data[user_id]["goal"] = goal
         
+        # ВАЖНО: Обновляем шаг!
+        if user_id in user_states:
+            user_states[user_id]["step"] = "goal_weight"
+        
         bot.send_message(
             call.message.chat.id,
             f"✅ Цель: <b>{GOALS[goal]}</b>\n\n"
@@ -576,7 +580,7 @@ def callback_handler(call):
             "<i>Если цель «Поддержать форму», напиши 0</i>"
         )
         bot.answer_callback_query(call.id)
-        return
+    return
     
     # Календарь - добавить тренировку
     if call.data == "cal_add":
