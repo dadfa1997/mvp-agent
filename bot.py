@@ -142,14 +142,15 @@ def format_response(text: str) -> str:
     Преобразует таблицы в красивые блоки.
     """
     # Экранируем HTML
+    # === ВАЖНО: Сначала заменяем <br> на реальные переносы строк ===
+    text = text.replace('<br>', '\n')
+    text = text.replace('<br/>', '\n')
+    text = text.replace('<br />', '\n')
+    
+    # Экранируем HTML
     text = text.replace('&', '&amp;')
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
-    
-    # Заголовки
-    text = text.replace('### ', '<b> ')
-    text = text.replace('## ', '<b> ')
-    text = text.replace('# ', '<b>📌 ')
     
     # Жирный и курсив
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
