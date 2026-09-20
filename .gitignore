@@ -1,0 +1,7 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+user_plans.json
+user_calendars.json
+user_stats.json
