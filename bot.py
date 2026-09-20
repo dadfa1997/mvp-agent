@@ -72,43 +72,60 @@ def get_agent(user_id: int) -> NutritionAgent:
 
 def format_response(text: str) -> str:
     """Безопасно форматирует ответ для Telegram HTML."""
+    # === УБИРАЕМ HTML-ТЕГИ ===
+    
     # Заменяем <br> на переносы строк
     text = re.sub(r'<br\s*/?>', '\n', text)
     
-    # Экранируем HTML-символы
+    # Убираем <details> и <summary>, заменяя на заголовки
+    text = re.sub(r'<details>', '', text)
+    text = re.sub(r'</details>', '', text)
+    text = re.sub(r'<summary>(.*?)</summary>', r'\1:\n', text)
+    
+    # Преобразуем <ul> и <li> в маркеры
+    text = re.sub(r'<ul>', '', text)
+    text = re.sub(r'</ul>', '', text)
+    text = re.sub(r'<li>', '  • ', text)
+    text = re.sub(r'</li>', '\n', text)
+    
+    # Убираем остальные HTML-теги
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # === ЭКРАНИРУЕМ HTML-СИМВОЛЫ ===
     text = text.replace('&', '&amp;')
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
     
-    # Заголовки
+    # === ЗАГОЛОВКИ ===
     text = text.replace('### ', '<b> ')
     text = text.replace('## ', '<b>📋 ')
     text = text.replace('# ', '<b>📌 ')
     
-    # Жирный и курсив через регулярки
+    # === ЖИРНЫЙ И КУРСИВ ===
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     
-    # Списки
+    # === СПИСКИ ===
     lines = text.split('\n')
     formatted_lines = []
     for line in lines:
-        if line.strip().startswith('- ') or line.strip().startswith('• '):
-            formatted_lines.append('  • ' + line.strip()[2:])
-        else:
+        line = line.strip()
+        if line.startswith('- ') or line.startswith('• '):
+            formatted_lines.append('  • ' + line[2:])
+        elif line:
             formatted_lines.append(line)
     
     text = '\n'.join(formatted_lines)
     
-    # Эмодзи для ключевых слов
+    # === ЭМОДЗИ ===
     emoji_map = {
         'калори': '🔥', 'белки': '🥩', 'жиры': '🥑', 'углеводы': '🍞',
-        'тренировк': '💪', 'рацион': '️', 'завтрак': '', 'обед': '☀️',
-        'полдник': '🍪', 'ужин': '🌙', 'цель': '🎯', 'вес': '⚖️',
+        'тренировк': '💪', 'рацион': '🍽️', 'завтрак': '🌅', 'обед': '☀️',
+        'полдник': '', 'ужин': '🌙', 'цель': '🎯', 'вес': '⚖️',
         'рост': '📏', 'возраст': '🎂', 'активность': '🏃',
-        'похуден': '📉', 'набор': '📈', 'поддержан': '️',
-        'понедельник': '📅', 'вторник': '', 'среда': '📅',
-        'четверг': '📅', 'пятница': '📅', 'суббота': '📅', 'воскресенье': '📅'
+        'похуден': '', 'набор': '📈', 'поддержан': '⚖️',
+        'понедельник': '📅', 'вторник': '📅', 'среда': '📅',
+        'четверг': '📅', 'пятница': '📅', 'суббота': '', 'воскресенье': '📅'
     }
     
     lines = text.split('\n')
@@ -807,22 +824,36 @@ def callback_handler(call):
         return
     
     # === Добавить план в календарь ===
+    # === Добавить план в календарь ===
     if call.data == "add_plan_to_cal":
-        db.add_training(user_id, "monday", "Тренировка А (из плана)")
-        db.add_training(user_id, "wednesday", "Тренировка Б (из плана)")
-        db.add_training(user_id, "friday", "Тренировка В (из плана)")
-        db.update_stats(user_id, "add")
-        db.update_stats(user_id, "add")
-        db.update_stats(user_id, "add")
+        logging.info(f" Пользователь {user_id} нажал 'Добавить план в календарь'")
         
-        bot.send_message(
-            call.message.chat.id,
-            "✅ <b>Готово!</b>\n\n"
-            "Я добавил базовые тренировки на Понедельник, Среду и Пятницу.\n\n"
-            "Ты можешь изменить их названия или удалить через:\n"
-            "• /addtraining\n• /deletetraining\n• /calendar",
-            reply_markup=get_main_menu()
-        )
+        try:
+            db.add_training(user_id, "monday", "Тренировка А (из плана)")
+            db.add_training(user_id, "wednesday", "Тренировка Б (из плана)")
+            db.add_training(user_id, "friday", "Тренировка В (из плана)")
+            db.update_stats(user_id, "add")
+            db.update_stats(user_id, "add")
+            db.update_stats(user_id, "add")
+            
+            logging.info(f"✅ Тренировки добавлены в календарь для пользователя {user_id}")
+            
+            bot.send_message(
+                call.message.chat.id,
+                "✅ <b>Готово!</b>\n\n"
+                "Я добавил базовые тренировки на Понедельник, Среду и Пятницу.\n\n"
+                "Ты можешь изменить их названия или удалить через:\n"
+                "• /addtraining\n• /deletetraining\n• /calendar",
+                reply_markup=get_main_menu()
+            )
+        except Exception as e:
+            logging.error(f"❌ Ошибка добавления плана в календарь: {e}")
+            bot.send_message(
+                call.message.chat.id,
+                f"❌ Произошла ошибка при добавлении: {e}",
+                reply_markup=get_main_menu()
+            )
+        
         bot.answer_callback_query(call.id)
         return
     
@@ -916,8 +947,16 @@ def handle_user_state(message):
             data["target_weight_change"] = target
             user_data[user_id] = data
             
+            logging.info(f"📊 Данные пользователя {user_id}: {data}")
+            
             # Сохраняем профиль
-            db.save_user_profile(user_id, data)
+            try:
+                db.save_user_profile(user_id, data)
+                logging.info("✅ Профиль сохранён в БД")
+            except Exception as db_err:
+                logging.error(f"❌ Ошибка сохранения профиля: {db_err}")
+                bot.send_message(message.chat.id, f"⚠️ Ошибка сохранения данных: {db_err}")
+                return
             
             gender_text = "мужчины" if data["gender"] == "male" else "женщины"
             goal_text = GOALS[data["goal"]]
@@ -925,25 +964,40 @@ def handle_user_state(message):
             
             query = f"Я {gender_text}, {data['age']} лет, вес {data['weight']} кг, рост {data['height']} см, {activity_text} активность. Хочу {goal_text.lower()} на {target} кг. Составь программу тренировок и рацион."
             
+            logging.info(f"📝 Запрос к агенту: {query}")
+            
             del user_states[user_id]
             del user_data[user_id]
             
             bot.send_message(message.chat.id, "⏳ Составляю программу...", reply_markup=get_main_menu())
-            agent = get_agent(user_id)
-            response = agent.process_input(query)
             
-            # Сохраняем план в БД
-            db.save_plan(user_id, response, goal_text)
-            
-            # Создаём клавиатуру с кнопкой добавления в календарь
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("➕ Добавить базовый шаблон в календарь", callback_data="add_plan_to_cal"))
-            
-            response += "\n\n💾 <i>План автоматически сохранён! Используй кнопку «📋 Мои планы», чтобы посмотреть его позже.</i>"
-            
-            bot.send_message(message.chat.id, format_response(response), reply_markup=markup, parse_mode="HTML")
+            try:
+                agent = get_agent(user_id)
+                response = agent.process_input(query)
+                logging.info("✅ Ответ от агента получен")
+                
+                # Сохраняем план в БД
+                db.save_plan(user_id, response, goal_text)
+                logging.info("✅ План сохранён в БД")
+                
+                # Создаём клавиатуру с кнопкой добавления в календарь
+                markup = types.InlineKeyboardMarkup()
+                markup.add(types.InlineKeyboardButton("➕ Добавить базовый шаблон в календарь", callback_data="add_plan_to_cal"))
+                
+                response += "\n\n💾 <i>План автоматически сохранён! Используй кнопку «📋 Мои планы», чтобы посмотреть его позже.</i>"
+                
+                bot.send_message(message.chat.id, format_response(response), reply_markup=markup, parse_mode="HTML")
+                logging.info("✅ Ответ отправлен пользователю")
+                
+            except Exception as agent_err:
+                logging.error(f"❌ Ошибка при вызове агента: {agent_err}")
+                bot.send_message(message.chat.id, f"😕 Ошибка при составлении программы: {agent_err}", reply_markup=get_main_menu())
+                
         except ValueError:
             bot.send_message(message.chat.id, "❌ Пожалуйста, введи число (например, 10):")
+        except Exception as e:
+            logging.error(f"❌ Критическая ошибка в goal_weight: {e}")
+            bot.send_message(message.chat.id, f"️ Произошла ошибка: {e}", reply_markup=get_main_menu())
         return
 
 
