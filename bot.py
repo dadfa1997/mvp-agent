@@ -26,12 +26,12 @@ if not BOT_TOKEN:
 # Инициализация бота
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", threaded=True)
 
-# Память пользователей (только для агентов)
+# Память пользователей
 user_agents = {}
 user_states = {}
 user_data = {}
 
-# Дни недели
+# Словари
 WEEK_DAYS = {
     "monday": "Понедельник",
     "tuesday": "Вторник",
@@ -42,7 +42,6 @@ WEEK_DAYS = {
     "sunday": "Воскресенье"
 }
 
-# Уровни активности
 ACTIVITY_LEVELS = {
     "low": "Низкая (сидячий образ жизни)",
     "moderate": "Средняя (тренировки 1-3 раза в неделю)",
@@ -50,45 +49,43 @@ ACTIVITY_LEVELS = {
     "very_high": "Очень высокая (тренировки 6-7 раз в неделю)"
 }
 
-# Цели
 GOALS = {
     "lose": "Похудеть",
     "gain": "Набрать массу",
     "maintain": "Поддержать форму"
 }
 
-# Маппинг дней недели для напоминаний
-DAY_MAP_RU_TO_EN = {
-    "Понедельник": "monday",
-    "Вторник": "tuesday",
-    "Среда": "wednesday",
-    "Четверг": "thursday",
-    "Пятница": "friday",
-    "Суббота": "saturday",
-    "Воскресенье": "sunday"
+ACTIVITY_RU = {
+    "low": "Низкая",
+    "moderate": "Средняя",
+    "high": "Высокая",
+    "very_high": "Очень высокая"
 }
+
+# --- Вспомогательные функции ---
 
 def get_agent(user_id: int) -> NutritionAgent:
     if user_id not in user_agents:
         user_agents[user_id] = NutritionAgent()
     return user_agents[user_id]
 
+
 def format_response(text: str) -> str:
-    """Улучшает форматирование ответа для Telegram."""
-    # Заменяем HTML-теги на переносы строк
+    """Безопасно форматирует ответ для Telegram HTML."""
+    # Заменяем <br> на переносы строк
     text = re.sub(r'<br\s*/?>', '\n', text)
     
-    # Экранируем HTML
+    # Экранируем HTML-символы
     text = text.replace('&', '&amp;')
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
     
     # Заголовки
-    text = text.replace('### ', '<b>📌 ')
-    text = text.replace('## ', '<b> ')
+    text = text.replace('### ', '<b> ')
+    text = text.replace('## ', '<b>📋 ')
     text = text.replace('# ', '<b>📌 ')
     
-    # Жирный и курсив
+    # Жирный и курсив через регулярки
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
     
@@ -103,13 +100,15 @@ def format_response(text: str) -> str:
     
     text = '\n'.join(formatted_lines)
     
-    # Эмодзи
+    # Эмодзи для ключевых слов
     emoji_map = {
-        'калори': '🔥', 'белки': '🥩', 'жиры': '', 'углеводы': '🍞',
-        'тренировк': '💪', 'рацион': '🍽️', 'завтрак': '🌅', 'обед': '☀️',
+        'калори': '🔥', 'белки': '🥩', 'жиры': '🥑', 'углеводы': '🍞',
+        'тренировк': '💪', 'рацион': '️', 'завтрак': '', 'обед': '☀️',
         'полдник': '🍪', 'ужин': '🌙', 'цель': '🎯', 'вес': '⚖️',
         'рост': '📏', 'возраст': '🎂', 'активность': '🏃',
-        'похуден': '📉', 'набор': '', 'поддержан': '⚖️'
+        'похуден': '📉', 'набор': '📈', 'поддержан': '️',
+        'понедельник': '📅', 'вторник': '', 'среда': '📅',
+        'четверг': '📅', 'пятница': '📅', 'суббота': '📅', 'воскресенье': '📅'
     }
     
     lines = text.split('\n')
@@ -122,6 +121,7 @@ def format_response(text: str) -> str:
     
     text = '\n'.join(lines)
     return text
+
 
 def format_calendar(user_id: int) -> str:
     """Форматирует календарь тренировок."""
@@ -143,34 +143,43 @@ def format_calendar(user_id: int) -> str:
         
         text += "\n"
     
-    text += f"<b> Твоя статистика:</b>\n"
-    text += f"  • Всего тренировок: {stats['total_workouts']}\n"
-    text += f"  • Выполнено: {stats['completed_workouts']}\n"
-    progress = round(stats['completed_workouts'] / max(stats['total_workouts'], 1) * 100)
-    text += f"  • Прогресс: {progress}%\n\n"
+    total = stats['total_workouts']
+    completed = stats['completed_workouts']
+    progress = round(completed / max(total, 1) * 100)
+    
+    text += f"<b>📊 Твоя статистика:</b>\n"
+    text += f"  • Всего тренировок: {total}\n"
+    text += f"  • Выполнено: {completed}\n"
+    text += f"  • Прогресс: {progress}%\n"
+    text += f"  • Последняя: {stats['last_workout_date'] or 'Ещё не было'}\n\n"
     text += "<i>Используй кнопки ниже для управления</i>"
     
     return text
 
-def send_long_message(chat_id: int, text: str):
+
+def send_long_message(chat_id: int, text: str, reply_markup=None):
     """Разбивает длинные сообщения на части."""
     formatted_text = format_response(text)
     max_length = 4000
     
+    chunks = []
     for i in range(0, len(formatted_text), max_length):
-        chunk = formatted_text[i:i + max_length]
+        chunks.append(formatted_text[i:i + max_length])
+    
+    for idx, chunk in enumerate(chunks):
         try:
-            bot.send_message(chat_id, chunk, parse_mode="HTML")
+            bot.send_message(chat_id, chunk, parse_mode="HTML", reply_markup=reply_markup if idx == len(chunks) - 1 else None)
         except Exception as e:
-            logging.error(f"Ошибка отправки сообщения (HTML): {e}")
+            logging.error(f"Ошибка отправки (HTML): {e}")
             try:
                 clean_text = re.sub(r'<[^>]+>', '', chunk)
-                bot.send_message(chat_id, clean_text, parse_mode=None)
+                bot.send_message(chat_id, clean_text, parse_mode=None, reply_markup=reply_markup if idx == len(chunks) - 1 else None)
             except Exception as e2:
-                logging.error(f"Ошибка отправки сообщения (текст): {e2}")
+                logging.error(f"Ошибка отправки (текст): {e2}")
                 bot.send_message(chat_id, "❌ Произошла ошибка при отправке ответа.", parse_mode=None)
 
-# --- КЛАВИАТУРЫ ---
+
+# --- Клавиатуры ---
 
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -180,16 +189,15 @@ def get_main_menu():
     )
     markup.add(
         types.KeyboardButton("📅 Календарь тренировок"),
-        types.KeyboardButton("📋 Мои планы")
+        types.KeyboardButton(" Мои планы")
     )
     markup.add(
         types.KeyboardButton("📈 Статистика"),
         types.KeyboardButton("🔔 Напоминания")
     )
-    markup.add(
-        types.KeyboardButton("❓ Помощь")
-    )
+    markup.add(types.KeyboardButton("❓ Помощь"))
     return markup
+
 
 def get_calendar_menu():
     markup = types.InlineKeyboardMarkup(row_width=2)
@@ -203,6 +211,7 @@ def get_calendar_menu():
     )
     return markup
 
+
 def get_days_menu(action_prefix: str):
     markup = types.InlineKeyboardMarkup(row_width=2)
     for day_key, day_name in WEEK_DAYS.items():
@@ -210,12 +219,14 @@ def get_days_menu(action_prefix: str):
     markup.add(types.InlineKeyboardButton("🔙 Отмена", callback_data="cancel"))
     return markup
 
+
 def get_goals_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
     for goal_key, goal_name in GOALS.items():
         markup.add(types.InlineKeyboardButton(f"🎯 {goal_name}", callback_data=f"goal_{goal_key}"))
-    markup.add(types.InlineKeyboardButton(" Отмена", callback_data="cancel"))
+    markup.add(types.InlineKeyboardButton("🔙 Отмена", callback_data="cancel"))
     return markup
+
 
 def get_activity_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -224,11 +235,21 @@ def get_activity_menu():
     markup.add(types.InlineKeyboardButton("🔙 Отмена", callback_data="cancel"))
     return markup
 
-# --- НАПОМИНАНИЯ ---
+
+def get_gender_menu():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("👨 Мужской", callback_data="gender_male"),
+        types.InlineKeyboardButton(" Женский", callback_data="gender_female")
+    )
+    return markup
+
+
+# --- Напоминания ---
 
 def send_daily_reminders():
     """Отправляет напоминания о тренировках."""
-    logging.info(" Проверка напоминаний...")
+    logging.info("⏰ Проверка напоминаний...")
     
     conn = db.get_db()
     cursor = conn.cursor()
@@ -237,7 +258,7 @@ def send_daily_reminders():
     conn.close()
     
     today = datetime.now().strftime("%A").lower()
-    day_ru = WEEK_DAYS.get(today, "")
+    day_ru = WEEK_DAYS.get(today, "сегодня")
     
     for user_row in users:
         user_id = user_row["user_id"]
@@ -248,7 +269,7 @@ def send_daily_reminders():
             reminder_text = (
                 f"<b>🔔 Доброе утро! Сегодня у тебя тренировка!</b>\n\n"
                 f"<b>📅 {day_ru}:</b>\n{training_list}\n\n"
-                f" Не забудь разминку и хорошее настроение!\n\n"
+                f"💪 Не забудь разминку и хорошее настроение!\n\n"
                 f"<i>Напиши /complete, чтобы отметить выполнение</i>"
             )
             try:
@@ -257,7 +278,8 @@ def send_daily_reminders():
             except Exception as e:
                 logging.error(f"❌ Ошибка отправки напоминания пользователю {user_id}: {e}")
 
-# --- ОБРАБОТЧИКИ КОМАНД ---
+
+# --- Обработчики команд ---
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -265,14 +287,12 @@ def send_welcome(message):
     username = message.from_user.username or ""
     first_name = message.from_user.first_name or ""
     
-    # Регистрируем пользователя в БД
     db.add_user(user_id, username, first_name)
-    
     get_agent(user_id)
     
     welcome_text = (
-        f"<b>👋 Привет, {first_name}! Я твой персональный ИИ-ассистент по фитнесу и питанию.</b>\n\n"
-        "<b>🛠 Что я умею:</b>\n"
+        f"<b> Привет, {first_name}! Я твой персональный ИИ-ассистент по фитнесу и питанию.</b>\n\n"
+        "<b> Что я умею:</b>\n"
         "• Рассчитывать суточную норму КБЖУ\n"
         "• Составлять программы тренировок и рационы\n"
         "• Вести твой личный календарь тренировок\n"
@@ -285,6 +305,7 @@ def send_welcome(message):
     )
     bot.send_message(message.chat.id, welcome_text, reply_markup=get_main_menu())
 
+
 @bot.message_handler(commands=['reset'])
 def reset_memory(message):
     user_id = message.from_user.id
@@ -294,7 +315,8 @@ def reset_memory(message):
         del user_states[user_id]
     if user_id in user_data:
         del user_data[user_id]
-    bot.send_message(message.chat.id, "🔄 <b>Память очищена.</b>\nНачнем диалог с чистого листа!", reply_markup=get_main_menu())
+    bot.send_message(message.chat.id, "🔄 <b>Память очищена.</b>\nНачнём диалог с чистого листа!", reply_markup=get_main_menu())
+
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
@@ -306,28 +328,30 @@ def send_help(message):
         "/addtraining - Добавить тренировку\n"
         "/deletetraining - Удалить тренировку\n"
         "/complete - Отметить тренировку выполненной\n"
-        "/myplan - Показать сохраненный план\n"
-        "/deleteplan - Удалить сохраненный план\n"
+        "/myplan - Показать сохранённый план\n"
+        "/deleteplan - Удалить сохранённый план\n"
         "/stats - Показать статистику\n"
         "/reminders - Настройки напоминаний\n"
         "/help - Показать это сообщение"
     )
     bot.send_message(message.chat.id, help_text, reply_markup=get_main_menu())
 
+
 @bot.message_handler(commands=['calendar'])
-def show_calendar(message):
+def show_calendar_cmd(message):
     user_id = message.from_user.id
     calendar_text = format_calendar(user_id)
     bot.send_message(message.chat.id, calendar_text, reply_markup=get_calendar_menu())
 
+
 @bot.message_handler(commands=['myplan'])
-def show_my_plan(message):
+def show_my_plan_cmd(message):
     user_id = message.from_user.id
     plan = db.get_plan(user_id)
     
     if plan:
         plan_text = (
-            f"<b>📋 Твой сохраненный план</b>\n"
+            f"<b>📋 Твой сохранённый план</b>\n"
             f"<b>Дата создания:</b> {plan['created_at']}\n"
             f"<b>Цель:</b> {plan['goal']}\n\n"
             f"{plan['content']}"
@@ -336,34 +360,41 @@ def show_my_plan(message):
     else:
         bot.send_message(
             message.chat.id,
-            "ℹ️ У тебя пока нет сохраненных планов.\n\n"
+            "ℹ️ У тебя пока нет сохранённых планов.\n\n"
             "Используй кнопку «💪 Программа тренировок», чтобы создать план!",
             reply_markup=get_main_menu()
         )
 
+
 @bot.message_handler(commands=['deleteplan'])
-def delete_plan(message):
+def delete_plan_cmd(message):
     user_id = message.from_user.id
     db.delete_plan(user_id)
-    bot.send_message(message.chat.id, " <b>План удален.</b>", reply_markup=get_main_menu())
+    bot.send_message(message.chat.id, " <b>План удалён.</b>", reply_markup=get_main_menu())
+
 
 @bot.message_handler(commands=['stats'])
-def show_stats(message):
+def show_stats_cmd(message):
     user_id = message.from_user.id
     stats = db.get_stats(user_id)
     
+    total = stats['total_workouts']
+    completed = stats['completed_workouts']
+    progress = round(completed / max(total, 1) * 100)
+    
     stats_text = (
         f"<b>📊 Твоя статистика</b>\n\n"
-        f"⚖️ <b>Всего тренировок:</b> {stats['total_workouts']}\n"
-        f"✅ <b>Выполнено:</b> {stats['completed_workouts']}\n"
-        f"📊 <b>Прогресс:</b> {round(stats['completed_workouts'] / max(stats['total_workouts'], 1) * 100)}%\n"
-        f"📅 <b>Последняя тренировка:</b> {stats['last_workout_date'] or 'Еще не было'}\n\n"
+        f"⚖️ <b>Всего тренировок:</b> {total}\n"
+        f"✅ <b>Выполнено:</b> {completed}\n"
+        f"📊 <b>Прогресс:</b> {progress}%\n"
+        f"📅 <b>Последняя тренировка:</b> {stats['last_workout_date'] or 'Ещё не было'}\n\n"
         f"<i>Продолжай в том же духе! 💪</i>"
     )
     bot.send_message(message.chat.id, stats_text, reply_markup=get_main_menu())
 
+
 @bot.message_handler(commands=['reminders'])
-def toggle_reminders(message):
+def toggle_reminders_cmd(message):
     user_id = message.from_user.id
     new_status = db.toggle_reminder(user_id)
     
@@ -372,51 +403,85 @@ def toggle_reminders(message):
     else:
         bot.send_message(message.chat.id, "🔕 <b>Напоминания выключены.</b>", reply_markup=get_main_menu())
 
-# --- ОБРАБОТЧИКИ ТЕКСТОВЫХ КНОПОК ---
+
+# --- Обработчики текстовых кнопок главного меню ---
 
 @bot.message_handler(func=lambda message: message.text == "📊 Рассчитать КБЖУ")
 def start_calc_macros(message):
     user_id = message.from_user.id
-    user_states[user_id] = {"step": "gender", "action": "calc_macros"}
-    user_data[user_id] = {}
+    profile = db.get_user_profile(user_id)
     
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("👨 Мужской", callback_data="gender_male"),
-        types.InlineKeyboardButton("👩 Женский", callback_data="gender_female")
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        "<b>📊 Расчет КБЖУ</b>\n\n"
-        "Давай пройдем по шагам. Сначала выбери пол:",
-        reply_markup=markup
-    )
+    if profile:
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("✅ Да, использовать мои данные", callback_data="use_saved_calc"),
+            types.InlineKeyboardButton("🔄 Нет, ввести новые данные", callback_data="enter_new_calc")
+        )
+        
+        gender_ru = "Мужской" if profile["gender"] == "male" else "Женский"
+        act_ru = ACTIVITY_RU.get(profile["activity_level"], profile["activity_level"])
+        
+        bot.send_message(
+            message.chat.id,
+            f"<b>📊 Расчёт КБЖУ</b>\n\n"
+            f"У меня уже есть твои данные:\n"
+            f"• {gender_ru}, {profile['age']} лет\n"
+            f"• Вес: {profile['weight']} кг, Рост: {profile['height']} см\n"
+            f"• Активность: {act_ru}\n\n"
+            f"Использовать их для расчёта?",
+            reply_markup=markup
+        )
+    else:
+        user_states[user_id] = {"step": "gender", "action": "calc_macros"}
+        user_data[user_id] = {}
+        bot.send_message(
+            message.chat.id,
+            "<b> Расчёт КБЖУ</b>\n\nДавай пройдём по шагам. Сначала выбери пол:",
+            reply_markup=get_gender_menu()
+        )
+
 
 @bot.message_handler(func=lambda message: message.text == "💪 Программа тренировок")
 def start_fitness_plan(message):
     user_id = message.from_user.id
-    user_states[user_id] = {"step": "gender", "action": "fitness_plan"}
-    user_data[user_id] = {}
+    profile = db.get_user_profile(user_id)
     
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("👨 Мужской", callback_data="gender_male"),
-        types.InlineKeyboardButton("👩 Женский", callback_data="gender_female")
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        "<b>💪 Программа тренировок и рацион</b>\n\n"
-        "Давай пройдем по шагам. Сначала выбери пол:",
-        reply_markup=markup
-    )
+    if profile:
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("✅ Да, использовать мои данные", callback_data="use_saved_plan"),
+            types.InlineKeyboardButton("🔄 Нет, ввести новые данные", callback_data="enter_new_plan")
+        )
+        
+        gender_ru = "Мужской" if profile["gender"] == "male" else "Женский"
+        act_ru = ACTIVITY_RU.get(profile["activity_level"], profile["activity_level"])
+        
+        bot.send_message(
+            message.chat.id,
+            f"<b>💪 Программа тренировок и рацион</b>\n\n"
+            f"У меня уже есть твои данные:\n"
+            f"• {gender_ru}, {profile['age']} лет\n"
+            f"• Вес: {profile['weight']} кг, Рост: {profile['height']} см\n"
+            f"• Активность: {act_ru}\n\n"
+            f"Использовать их для составления плана?",
+            reply_markup=markup
+        )
+    else:
+        user_states[user_id] = {"step": "gender", "action": "fitness_plan"}
+        user_data[user_id] = {}
+        bot.send_message(
+            message.chat.id,
+            "<b>💪 Программа тренировок и рацион</b>\n\nДавай пройдём по шагам. Сначала выбери пол:",
+            reply_markup=get_gender_menu()
+        )
+
 
 @bot.message_handler(func=lambda message: message.text == "📅 Календарь тренировок")
 def show_calendar_btn(message):
     user_id = message.from_user.id
     calendar_text = format_calendar(user_id)
     bot.send_message(message.chat.id, calendar_text, reply_markup=get_calendar_menu())
+
 
 @bot.message_handler(func=lambda message: message.text == "📋 Мои планы")
 def show_my_plan_btn(message):
@@ -425,7 +490,7 @@ def show_my_plan_btn(message):
     
     if plan:
         plan_text = (
-            f"<b>📋 Твой сохраненный план</b>\n"
+            f"<b>📋 Твой сохранённый план</b>\n"
             f"<b>Дата создания:</b> {plan['created_at']}\n"
             f"<b>Цель:</b> {plan['goal']}\n\n"
             f"{plan['content']}"
@@ -434,23 +499,30 @@ def show_my_plan_btn(message):
     else:
         bot.send_message(
             message.chat.id,
-            "ℹ️ У тебя пока нет сохраненных планов.",
+            "ℹ️ У тебя пока нет сохранённых планов.\n\n"
+            "Используй кнопку «💪 Программа тренировок», чтобы создать план!",
             reply_markup=get_main_menu()
         )
+
 
 @bot.message_handler(func=lambda message: message.text == "📈 Статистика")
 def show_stats_btn(message):
     user_id = message.from_user.id
     stats = db.get_stats(user_id)
     
+    total = stats['total_workouts']
+    completed = stats['completed_workouts']
+    progress = round(completed / max(total, 1) * 100)
+    
     stats_text = (
         f"<b>📊 Твоя статистика</b>\n\n"
-        f"️ <b>Всего тренировок:</b> {stats['total_workouts']}\n"
-        f"✅ <b>Выполнено:</b> {stats['completed_workouts']}\n"
-        f"📊 <b>Прогресс:</b> {round(stats['completed_workouts'] / max(stats['total_workouts'], 1) * 100)}%\n"
-        f" <b>Последняя тренировка:</b> {stats['last_workout_date'] or 'Еще не было'}"
+        f"⚖️ <b>Всего тренировок:</b> {total}\n"
+        f"✅ <b>Выполнено:</b> {completed}\n"
+        f"📊 <b>Прогресс:</b> {progress}%\n"
+        f"📅 <b>Последняя тренировка:</b> {stats['last_workout_date'] or 'Ещё не было'}"
     )
     bot.send_message(message.chat.id, stats_text, reply_markup=get_main_menu())
+
 
 @bot.message_handler(func=lambda message: message.text == "🔔 Напоминания")
 def toggle_reminders_btn(message):
@@ -462,7 +534,8 @@ def toggle_reminders_btn(message):
     else:
         bot.send_message(message.chat.id, "🔕 <b>Напоминания выключены.</b>", reply_markup=get_main_menu())
 
-# --- ОБРАБОТКА INLINE-КНОПОК ---
+
+# --- Обработка inline-кнопок ---
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
@@ -481,6 +554,51 @@ def callback_handler(call):
         if user_id in user_data:
             del user_data[user_id]
         bot.send_message(call.message.chat.id, "❌ Действие отменено", reply_markup=get_main_menu())
+        bot.answer_callback_query(call.id)
+        return
+    
+    # === Использование сохранённых данных ===
+    if call.data in ["use_saved_calc", "use_saved_plan"]:
+        profile = db.get_user_profile(user_id)
+        action = "calc_macros" if call.data == "use_saved_calc" else "fitness_plan"
+        
+        bot.send_message(call.message.chat.id, "⏳ Обрабатываю твои данные...", reply_markup=get_main_menu())
+        
+        agent = get_agent(user_id)
+        gender_text = "мужчины" if profile["gender"] == "male" else "женщины"
+        act_text = ACTIVITY_RU.get(profile["activity_level"], "средняя").lower()
+        
+        if action == "calc_macros":
+            query = f"Рассчитай КБЖУ для {gender_text}, {profile['age']} лет, вес {profile['weight']} кг, рост {profile['height']} см, {act_text} активность."
+            response = agent.process_input(query)
+            send_long_message(call.message.chat.id, response)
+        else:
+            # Для плана спрашиваем цель, так как она могла измениться
+            user_states[user_id] = {"step": "goal", "action": "fitness_plan"}
+            user_data[user_id] = dict(profile)
+            
+            bot.send_message(
+                call.message.chat.id,
+                "Отлично! Данные приняты. Теперь выбери текущую цель:",
+                reply_markup=get_goals_menu()
+            )
+            bot.answer_callback_query(call.id)
+            return
+        
+        bot.answer_callback_query(call.id)
+        return
+    
+    # === Ввод новых данных ===
+    if call.data in ["enter_new_calc", "enter_new_plan"]:
+        action = "calc_macros" if call.data == "enter_new_calc" else "fitness_plan"
+        user_states[user_id] = {"step": "gender", "action": action}
+        user_data[user_id] = {}
+        
+        bot.send_message(
+            call.message.chat.id,
+            "Понял! Давай введём новые данные. Сначала выбери пол:",
+            reply_markup=get_gender_menu()
+        )
         bot.answer_callback_query(call.id)
         return
     
@@ -511,16 +629,21 @@ def callback_handler(call):
         
         if user_states[user_id]["action"] == "calc_macros":
             data = user_data[user_id]
-            query = f"Рассчитай КБЖУ для {'мужчины' if data['gender'] == 'male' else 'женщины'}, {data['age']} лет, вес {data['weight']} кг, рост {data['height']} см, {ACTIVITY_LEVELS[activity].split(' ')[0].lower()} активность."
+            
+            # Сохраняем профиль
+            db.save_user_profile(user_id, data)
+            
+            query = f"Рассчитай КБЖУ для {'мужчины' if data['gender'] == 'male' else 'женщины'}, {data['age']} лет, вес {data['weight']} кг, рост {data['height']} см, {ACTIVITY_RU.get(activity, 'средняя').lower()} активность."
             
             del user_states[user_id]
             del user_data[user_id]
             
-            bot.send_message(call.message.chat.id, " Рассчитываю...", reply_markup=get_main_menu())
+            bot.send_message(call.message.chat.id, "⏳ Рассчитываю...", reply_markup=get_main_menu())
             agent = get_agent(user_id)
             response = agent.process_input(query)
             send_long_message(call.message.chat.id, response)
         else:
+            # Для программы тренировок спрашиваем цель
             if user_id in user_states:
                 user_states[user_id]["step"] = "goal"
             
@@ -551,7 +674,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
         return
     
-    # Календарь - добавить тренировку
+    # === Календарь ===
     if call.data == "cal_add":
         bot.send_message(
             call.message.chat.id,
@@ -562,18 +685,16 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
         return
     
-    # Календарь - удалить тренировку
     if call.data == "cal_delete":
         bot.send_message(
             call.message.chat.id,
-            "<b> Удаление тренировки</b>\n\n"
+            "<b>🗑 Удаление тренировки</b>\n\n"
             "Выбери день недели:",
             reply_markup=get_days_menu("del")
         )
         bot.answer_callback_query(call.id)
         return
     
-    # Календарь - отметить выполненной
     if call.data == "cal_complete":
         bot.send_message(
             call.message.chat.id,
@@ -592,7 +713,7 @@ def callback_handler(call):
             call.message.chat.id,
             f"<b>➕ Добавление тренировки на {WEEK_DAYS[day_key]}</b>\n\n"
             "Напиши название тренировки:\n"
-            "<i>Например: Жим лежа 4x10, Приседания 5x5, Бег 30 минут</i>"
+            "<i>Например: Жим лёжа 4x10, Приседания 5x5, Бег 30 минут</i>"
         )
         bot.answer_callback_query(call.id)
         return
@@ -657,7 +778,7 @@ def callback_handler(call):
                 f"{status} {i+1}. {training['name']}",
                 callback_data=f"comp_confirm_{training['id']}"
             ))
-        markup.add(types.InlineKeyboardButton(" Отмена", callback_data="cancel"))
+        markup.add(types.InlineKeyboardButton("🔙 Отмена", callback_data="cancel"))
         
         bot.send_message(
             call.message.chat.id,
@@ -676,7 +797,7 @@ def callback_handler(call):
         if new_status:
             db.update_stats(user_id, "complete")
         
-        status = "выполнена ✅" if new_status else "не выполнена ⬜"
+        status = "выполнена ✅" if new_status else "не выполнена "
         bot.send_message(
             call.message.chat.id,
             f"✅ Тренировка теперь {status}!",
@@ -685,9 +806,30 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
         return
     
+    # === Добавить план в календарь ===
+    if call.data == "add_plan_to_cal":
+        db.add_training(user_id, "monday", "Тренировка А (из плана)")
+        db.add_training(user_id, "wednesday", "Тренировка Б (из плана)")
+        db.add_training(user_id, "friday", "Тренировка В (из плана)")
+        db.update_stats(user_id, "add")
+        db.update_stats(user_id, "add")
+        db.update_stats(user_id, "add")
+        
+        bot.send_message(
+            call.message.chat.id,
+            "✅ <b>Готово!</b>\n\n"
+            "Я добавил базовые тренировки на Понедельник, Среду и Пятницу.\n\n"
+            "Ты можешь изменить их названия или удалить через:\n"
+            "• /addtraining\n• /deletetraining\n• /calendar",
+            reply_markup=get_main_menu()
+        )
+        bot.answer_callback_query(call.id)
+        return
+    
     bot.answer_callback_query(call.id)
 
-# --- ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ (пошаговый ввод) ---
+
+# --- Обработка текстовых сообщений (пошаговый ввод) ---
 
 @bot.message_handler(func=lambda message: message.from_user.id in user_states)
 def handle_user_state(message):
@@ -723,35 +865,35 @@ def handle_user_state(message):
         try:
             age = int(message.text.strip())
             if age < 10 or age > 100:
-                bot.send_message(message.chat.id, "❌ Возраст должен быть от 10 до 100 лет.")
+                bot.send_message(message.chat.id, "❌ Возраст должен быть от 10 до 100 лет. Попробуй ещё раз:")
                 return
             data["age"] = age
             user_data[user_id] = data
             bot.send_message(message.chat.id, f"✅ Возраст: <b>{age} лет</b>\n\nТеперь напиши свой вес в кг (например, 75):")
             user_states[user_id]["step"] = "weight"
         except ValueError:
-            bot.send_message(message.chat.id, "❌ Пожалуйста, введи число:")
+            bot.send_message(message.chat.id, "❌ Пожалуйста, введи число (например, 25):")
         return
     
     elif step == "weight":
         try:
             weight = float(message.text.strip())
             if weight < 30 or weight > 300:
-                bot.send_message(message.chat.id, "❌ Вес должен быть от 30 до 300 кг.")
+                bot.send_message(message.chat.id, "❌ Вес должен быть от 30 до 300 кг. Попробуй ещё раз:")
                 return
             data["weight"] = weight
             user_data[user_id] = data
             bot.send_message(message.chat.id, f"✅ Вес: <b>{weight} кг</b>\n\nТеперь напиши свой рост в см (например, 180):")
             user_states[user_id]["step"] = "height"
         except ValueError:
-            bot.send_message(message.chat.id, "❌ Пожалуйста, введи число:")
+            bot.send_message(message.chat.id, "❌ Пожалуйста, введи число (например, 75):")
         return
     
     elif step == "height":
         try:
             height = float(message.text.strip())
             if height < 100 or height > 250:
-                bot.send_message(message.chat.id, "❌ Рост должен быть от 100 до 250 см.")
+                bot.send_message(message.chat.id, "❌ Рост должен быть от 100 до 250 см. Попробуй ещё раз:")
                 return
             data["height"] = height
             user_data[user_id] = data
@@ -762,21 +904,24 @@ def handle_user_state(message):
             )
             user_states[user_id]["step"] = "activity"
         except ValueError:
-            bot.send_message(message.chat.id, "❌ Пожалуйста, введи число:")
+            bot.send_message(message.chat.id, "❌ Пожалуйста, введи число (например, 180):")
         return
     
     elif step == "goal_weight":
         try:
             target = float(message.text.strip())
             if target < 0 or target > 100:
-                bot.send_message(message.chat.id, "❌ Значение должно быть от 0 до 100 кг.")
+                bot.send_message(message.chat.id, "❌ Значение должно быть от 0 до 100 кг. Попробуй ещё раз:")
                 return
             data["target_weight_change"] = target
             user_data[user_id] = data
             
+            # Сохраняем профиль
+            db.save_user_profile(user_id, data)
+            
             gender_text = "мужчины" if data["gender"] == "male" else "женщины"
             goal_text = GOALS[data["goal"]]
-            activity_text = ACTIVITY_LEVELS[data["activity_level"]].split(" ")[0].lower()
+            activity_text = ACTIVITY_RU.get(data["activity_level"], "средняя").lower()
             
             query = f"Я {gender_text}, {data['age']} лет, вес {data['weight']} кг, рост {data['height']} см, {activity_text} активность. Хочу {goal_text.lower()} на {target} кг. Составь программу тренировок и рацион."
             
@@ -790,13 +935,19 @@ def handle_user_state(message):
             # Сохраняем план в БД
             db.save_plan(user_id, response, goal_text)
             
-            response += "\n\n💾 <i>План автоматически сохранен! Используй кнопку «📋 Мои планы», чтобы посмотреть его позже.</i>"
-            send_long_message(message.chat.id, response)
+            # Создаём клавиатуру с кнопкой добавления в календарь
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("➕ Добавить базовый шаблон в календарь", callback_data="add_plan_to_cal"))
+            
+            response += "\n\n💾 <i>План автоматически сохранён! Используй кнопку «📋 Мои планы», чтобы посмотреть его позже.</i>"
+            
+            bot.send_message(message.chat.id, format_response(response), reply_markup=markup, parse_mode="HTML")
         except ValueError:
-            bot.send_message(message.chat.id, "❌ Пожалуйста, введи число:")
+            bot.send_message(message.chat.id, "❌ Пожалуйста, введи число (например, 10):")
         return
 
-# --- ОБРАБОТКА ОБЫЧНЫХ СООБЩЕНИЙ ---
+
+# --- Обработка обычных сообщений ---
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -810,15 +961,26 @@ def handle_message(message):
         
         if "программа тренировок" in response.lower() or "рацион" in response.lower():
             db.save_plan(user_id, response, "Фитнес-план")
-            response += "\n\n💾 <i>План автоматически сохранен! Используй кнопку «📋 Мои планы», чтобы посмотреть его позже.</i>"
-        
-        send_long_message(message.chat.id, response)
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("➕ Добавить базовый шаблон в календарь", callback_data="add_plan_to_cal"))
+            
+            response += "\n\n💾 <i>План автоматически сохранён! Используй кнопку «📋 Мои планы», чтобы посмотреть его позже.</i>"
+            
+            bot.send_message(message.chat.id, format_response(response), reply_markup=markup, parse_mode="HTML")
+        else:
+            send_long_message(message.chat.id, response)
         
     except Exception as e:
         logging.error(f"Критическая ошибка при обработке сообщения от {user_id}: {e}")
-        bot.send_message(message.chat.id, "😕 Произошла внутренняя ошибка. Попробуйте переформулировать запрос или нажмите /reset.", reply_markup=get_main_menu())
+        bot.send_message(
+            message.chat.id,
+            "😕 Произошла внутренняя ошибка. Попробуйте переформулировать запрос или нажмите /reset.",
+            reply_markup=get_main_menu()
+        )
 
-# --- Flask для поддержания активности ---
+
+# --- Flask для поддержания активности на Render ---
 app = Flask(__name__)
 
 @app.route('/', methods=['GET'])
@@ -828,23 +990,22 @@ def health_check():
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
+
 # --- Планировщик напоминаний ---
 def run_scheduler():
     scheduler = BackgroundScheduler()
-    # Запускаем проверку напоминаний каждый день в 8:00 (время UTC, можно настроить)
     scheduler.add_job(send_daily_reminders, 'cron', hour=8, minute=0)
     scheduler.start()
     logging.info("⏰ Планировщик напоминаний запущен")
 
+
+# --- Запуск ---
 if __name__ == "__main__":
     logging.info("🚀 Запуск бота...")
     
-    # Запускаем Flask в фоновом потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
-    # Запускаем планировщик напоминаний
     run_scheduler()
     
-    # Запускаем бота
     bot.infinity_polling(timeout=60, long_polling_timeout=60)
