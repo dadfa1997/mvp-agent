@@ -2,6 +2,8 @@
 .venv/
 __pycache__/
 *.pyc
+*.db
 user_plans.json
 user_calendars.json
 user_stats.json
+fitness_bot.db
